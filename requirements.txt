@@ -1,0 +1,20 @@
+# Batman Package Manager Requirements
+# Core Python requirements (all using standard library)
+
+# No external dependencies required for core functionality
+# All functionality is built using Python standard library modules:
+# - argparse (CLI interface)
+# - json (configuration and database)
+# - subprocess (executing package manager commands)
+# - pathlib (file system operations)
+# - logging (logging functionality)
+# - urllib (for PyPI API access)
+# - re (regular expressions)
+# - datetime (timestamps)
+# - dataclasses (data structures)
+
+# Optional dependencies for enhanced functionality:
+# requests>=2.25.0  # Alternative to urllib for HTTP requests
+# colorama>=0.4.0   # Enhanced cross-platform colored output
+# click>=8.0.0      # Alternative to argparse for CLI
+# rich>=10.0.0      # Rich text and beautiful formatting 
