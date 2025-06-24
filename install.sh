@@ -111,11 +111,94 @@ print_success "Batman source found: $BATMAN_PATH"
 # Install Python dependencies
 print_step "Installing Python dependencies"
 if [[ -f "$SCRIPT_DIR/requirements.txt" ]]; then
-    if $PIP_CMD install --user -r "$SCRIPT_DIR/requirements.txt"; then
-        print_success "Dependencies installed successfully"
+    # First try with --user flag
+    if $PIP_CMD install --user -r "$SCRIPT_DIR/requirements.txt" 2>/dev/null; then
+        print_success "Dependencies installed successfully (user install)"
     else
-        print_error "Failed to install dependencies"
-        exit 1
+        print_warning "User installation failed, trying alternative methods..."
+        
+        # Check if it's the externally-managed-environment error
+        if $PIP_CMD install --user -r "$SCRIPT_DIR/requirements.txt" 2>&1 | grep -q "externally-managed-environment"; then
+            print_warning "Detected externally-managed-environment (PEP 668)"
+            echo -e "\n${CYAN}Choose installation method:${NC}"
+            echo -e "  1) Use --break-system-packages (override system protection)"
+            echo -e "  2) Create a virtual environment (recommended)"
+            echo -e "  3) Skip dependency installation (Batman uses only standard library)"
+            
+            read -p "Enter choice (1/2/3): " -n 1 -r
+            echo
+            
+            case "$REPLY" in
+                1)
+                    print_step "Installing with --break-system-packages"
+                    if $PIP_CMD install --user --break-system-packages -r "$SCRIPT_DIR/requirements.txt"; then
+                        print_success "Dependencies installed successfully (system packages override)"
+                    else
+                        print_error "Failed to install dependencies even with --break-system-packages"
+                        exit 1
+                    fi
+                    ;;
+                2)
+                    print_step "Creating virtual environment"
+                    VENV_DIR="$SCRIPT_DIR/.venv"
+                    if $PYTHON_CMD -m venv "$VENV_DIR"; then
+                        print_success "Virtual environment created: $VENV_DIR"
+                        
+                        # Install dependencies in venv
+                        if "$VENV_DIR/bin/pip" install -r "$SCRIPT_DIR/requirements.txt"; then
+                            print_success "Dependencies installed in virtual environment"
+                            
+                            # Update PYTHON_CMD to use venv python
+                            PYTHON_CMD="$VENV_DIR/bin/python"
+                            BATMAN_PATH="$SCRIPT_DIR/batman.py"
+                            
+                            # Create a wrapper script that uses the venv
+                            cat > "$SCRIPT_DIR/batman_wrapper.py" << 'EOF'
+#!/usr/bin/env python3
+import sys
+import os
+from pathlib import Path
+
+# Get the directory where this wrapper is located
+script_dir = Path(__file__).parent
+venv_python = script_dir / ".venv" / "bin" / "python"
+batman_script = script_dir / "batman.py"
+
+# Use venv python if it exists, otherwise use system python
+if venv_python.exists():
+    python_cmd = str(venv_python)
+else:
+    python_cmd = sys.executable
+
+# Execute batman.py with the appropriate python
+os.execv(python_cmd, [python_cmd, str(batman_script)] + sys.argv[1:])
+EOF
+                            chmod +x "$SCRIPT_DIR/batman_wrapper.py"
+                            BATMAN_PATH="$SCRIPT_DIR/batman_wrapper.py"
+                            print_success "Created wrapper script for virtual environment"
+                        else
+                            print_error "Failed to install dependencies in virtual environment"
+                            exit 1
+                        fi
+                    else
+                        print_error "Failed to create virtual environment"
+                        exit 1
+                    fi
+                    ;;
+                3)
+                    print_warning "Skipping dependency installation"
+                    print_warning "Batman should work with standard library only"
+                    ;;
+                *)
+                    print_error "Invalid choice. Exiting."
+                    exit 1
+                    ;;
+            esac
+        else
+            # Some other pip error
+            print_error "Failed to install dependencies for unknown reason"
+            print_warning "You can try installing dependencies manually later"
+        fi
     fi
 else
     print_warning "requirements.txt not found, skipping dependency installation"

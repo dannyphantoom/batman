@@ -131,13 +131,12 @@ class CargoManager(PackageManagerBase):
             self.logger.command_error("remove", str(e), package_name)
             return False
     
-    def search(self, query: str, **kwargs) -> List[Dict[str, Any]]:
+    def search(self, query: str, limit: int = 10, **kwargs) -> List[Dict[str, Any]]:
         """Search for Rust crates"""
         try:
             search_cmd = ['cargo', 'search', query]
             
             # Limit results
-            limit = kwargs.get('limit', 10)
             search_cmd.extend(['--limit', str(limit)])
             
             result = self.run_command(search_cmd)

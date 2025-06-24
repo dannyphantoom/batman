@@ -40,7 +40,7 @@ class PackageManagerBase(ABC):
         pass
     
     @abstractmethod
-    def search(self, query: str, **kwargs) -> List[Dict[str, Any]]:
+    def search(self, query: str, limit: int = 10, **kwargs) -> List[Dict[str, Any]]:
         """Search for packages"""
         pass
     

@@ -120,12 +120,80 @@ Write-Step "Installing Python dependencies"
 $RequirementsPath = Join-Path $ScriptDir "requirements.txt"
 if (Test-Path $RequirementsPath) {
     try {
-        & $PipCmd install --user -r $RequirementsPath
-        Write-Success "Dependencies installed successfully"
+        & $PipCmd install --user -r $RequirementsPath 2>$null
+        Write-Success "Dependencies installed successfully (user install)"
     }
     catch {
-        Write-Error "Failed to install dependencies"
-        exit 1
+        Write-Warning "User installation failed, trying alternative methods..."
+        
+        # Check if it's the externally-managed-environment error
+        $ErrorOutput = & $PipCmd install --user -r $RequirementsPath 2>&1 | Out-String
+        if ($ErrorOutput -match "externally-managed-environment") {
+            Write-Warning "Detected externally-managed-environment (PEP 668)"
+            Write-Host "`nChoose installation method:" -ForegroundColor Cyan
+            Write-Host "  1) Use --break-system-packages (override system protection)"
+            Write-Host "  2) Create a virtual environment (recommended)" 
+            Write-Host "  3) Skip dependency installation (Batman uses only standard library)"
+            
+            $Choice = Read-Host "Enter choice (1/2/3)"
+            
+            switch ($Choice) {
+                "1" {
+                    Write-Step "Installing with --break-system-packages"
+                    try {
+                        & $PipCmd install --user --break-system-packages -r $RequirementsPath
+                        Write-Success "Dependencies installed successfully (system packages override)"
+                    }
+                    catch {
+                        Write-Error "Failed to install dependencies even with --break-system-packages"
+                        exit 1
+                    }
+                }
+                "2" {
+                    Write-Step "Creating virtual environment"
+                    $VenvDir = Join-Path $ScriptDir ".venv"
+                    
+                    try {
+                        & $PythonCmd -m venv $VenvDir
+                        Write-Success "Virtual environment created: $VenvDir"
+                        
+                        # Install dependencies in venv
+                        $VenvPip = Join-Path $VenvDir "Scripts\pip.exe"
+                        & $VenvPip install -r $RequirementsPath
+                        Write-Success "Dependencies installed in virtual environment"
+                        
+                        # Update Python command to use venv
+                        $PythonCmd = Join-Path $VenvDir "Scripts\python.exe"
+                        
+                        # Create wrapper batch file that uses venv
+                        $WrapperPath = Join-Path $ScriptDir "batman_wrapper.bat"
+                        $WrapperContent = @"
+@echo off
+"$PythonCmd" "$BatmanPath" %*
+"@
+                        Set-Content -Path $WrapperPath -Value $WrapperContent
+                        $BatmanPath = $WrapperPath
+                        Write-Success "Created wrapper script for virtual environment"
+                    }
+                    catch {
+                        Write-Error "Failed to create or setup virtual environment"
+                        exit 1
+                    }
+                }
+                "3" {
+                    Write-Warning "Skipping dependency installation"
+                    Write-Warning "Batman should work with standard library only"
+                }
+                default {
+                    Write-Error "Invalid choice. Exiting."
+                    exit 1
+                }
+            }
+        }
+        else {
+            Write-Error "Failed to install dependencies for unknown reason"
+            Write-Warning "You can try installing dependencies manually later"
+        }
     }
 }
 else {

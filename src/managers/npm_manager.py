@@ -112,7 +112,7 @@ class NpmManager(PackageManagerBase):
             self.logger.command_error("remove", str(e), package_name)
             return False
     
-    def search(self, query: str, **kwargs) -> List[Dict[str, Any]]:
+    def search(self, query: str, limit: int = 10, **kwargs) -> List[Dict[str, Any]]:
         """Search for Node.js packages"""
         try:
             search_cmd = ['npm', 'search', '--json', query]

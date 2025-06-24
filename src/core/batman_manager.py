@@ -31,8 +31,11 @@ class BatmanManager:
         self.managers = {}
         self._initialize_managers()
         
-        # Auto-detection order (priority)
-        self.auto_detect_order = ['cargo', 'pip', 'npm', 'pacman', 'apt']
+        # Auto-detection order (priority for project file detection)
+        self.auto_detect_order = ['pacman', 'apt', 'cargo', 'npm', 'pip']
+        
+        # Package search order (priority for when searching across managers)
+        self.package_search_order = ['pacman', 'apt', 'cargo', 'npm', 'pip']
     
     def _initialize_managers(self):
         """Initialize all available package managers"""
@@ -67,18 +70,200 @@ class BatmanManager:
             if manager_name in self.managers:
                 manager = self.managers[manager_name]
                 if manager.auto_detect_project_type(search_dir):
-                    self.logger.debug(f"Auto-detected {manager_name} for {package_name}")
+                    self.logger.debug(f"Auto-detected {manager_name} for {package_name} (project files)")
                     return manager_name
         
-        # Fallback to pip as default for most cases
+        # If no project files found, prioritize the system package manager
+        system_manager = self._detect_current_system_package_manager()
+        if system_manager and system_manager in self.managers:
+            self.logger.debug(f"Prioritizing system package manager: {system_manager}")
+            # Check if the package might be available in the system manager
+            try:
+                manager = self.managers[system_manager]
+                
+                # For common Python packages, prefer system manager immediately
+                common_python_packages = [
+                    'numpy', 'scipy', 'matplotlib', 'pandas', 'requests', 'flask', 
+                    'django', 'sympy', 'pillow', 'pyqt5', 'pyqt6', 'psutil',
+                    'lxml', 'beautifulsoup4', 'selenium', 'cryptography', 'setuptools',
+                    'wheel', 'virtualenv', 'pytest', 'pylint', 'black', 'flake8',
+                    'isort', 'mypy', 'poetry', 'tox', 'sphinx', 'click', 'pyyaml',
+                    'yaml', 'redis', 'celery', 'sqlalchemy', 'alembic', 'jinja2',
+                    'markupsafe', 'werkzeug', 'twisted', 'tornado', 'aiohttp', 'fastapi'
+                ]
+                
+                if package_name.lower() in common_python_packages:
+                    self.logger.info(f"📦 '{package_name}' is a common Python package, prioritizing system manager ({system_manager})")
+                    return system_manager
+                
+                results = manager.search(package_name, limit=1)
+                if results:
+                    exact_matches = [pkg for pkg in results if pkg.get('name', '').lower() == package_name.lower()]
+                    if exact_matches:
+                        self.logger.info(f"📦 Found '{package_name}' in system package manager ({system_manager})")
+                        return system_manager
+                    # Even if not exact match, still prefer system manager for python packages
+                    if system_manager in ['pacman', 'apt'] and any(
+                        pkg.get('name', '').lower().startswith('python-') or 
+                        pkg.get('name', '').lower().startswith('python3-')
+                        for pkg in results
+                    ):
+                        self.logger.info(f"📦 Found python packages in system manager ({system_manager}), will try system installation")
+                        return system_manager
+            except Exception as e:
+                self.logger.debug(f"System manager search failed: {e}")
+                # For common Python packages, still prefer system manager even if search fails
+                if package_name.lower() in ['numpy', 'scipy', 'matplotlib', 'pandas', 'requests', 
+                                           'flask', 'django', 'sympy', 'pillow', 'pyqt5', 'pyqt6']:
+                    self.logger.info(f"📦 '{package_name}' is a common Python package, using system manager ({system_manager}) despite search failure")
+                    return system_manager
+        
+        # If no project files found, search for the package across managers
+        self.logger.debug(f"No project files detected, searching for '{package_name}' across managers...")
+        detected_manager = self._search_package_across_managers(package_name)
+        if detected_manager:
+            return detected_manager
+        
+        # Enhanced fallback: prefer the detected system package manager
+        if system_manager and system_manager in self.managers:
+            self.logger.debug(f"Falling back to detected system package manager: {system_manager}")
+            return system_manager
+        
+        # Generic fallback to any available system package manager
+        system_managers = ['pacman', 'apt', 'yum', 'dnf', 'brew']
+        for manager_name in system_managers:
+            if manager_name in self.managers:
+                self.logger.debug(f"Falling back to system package manager: {manager_name}")
+                return manager_name
+        
+        # Final fallback to pip
         if 'pip' in self.managers:
+            self.logger.debug(f"Final fallback to pip for {package_name}")
             return 'pip'
         
         # If pip not available, return first available manager
         if self.managers:
-            return list(self.managers.keys())[0]
+            first_manager = list(self.managers.keys())[0]
+            self.logger.debug(f"Using first available manager: {first_manager}")
+            return first_manager
         
         return None
+    
+    def _detect_current_system_package_manager(self) -> Optional[str]:
+        """Detect the current system's package manager"""
+        # Check for package managers in order of preference
+        package_managers = [
+            ('pacman', 'pacman'),  # Arch Linux
+            ('apt', 'apt'),        # Debian/Ubuntu
+            ('yum', 'yum'),        # RHEL/CentOS
+            ('dnf', 'dnf'),        # Fedora
+            ('brew', 'brew'),      # macOS
+        ]
+        
+        import shutil
+        for manager_name, command in package_managers:
+            if shutil.which(command):
+                self.logger.debug(f"Detected system package manager: {manager_name}")
+                return manager_name
+        
+        return None
+    
+    def _search_package_across_managers(self, package_name: str) -> Optional[str]:
+        """Search for a package across all available managers to find the best match"""
+        self.logger.debug(f"Searching for package '{package_name}' across managers...")
+        
+        # Track search results
+        search_results = {}
+        
+        for manager_name in self.package_search_order:
+            if manager_name not in self.managers:
+                continue
+                
+            manager = self.managers[manager_name]
+            self.logger.debug(f"Searching in {manager_name}...")
+            
+            try:
+                # Search for the package
+                results = manager.search(package_name, limit=5)
+                
+                if results:
+                    # Look for exact matches first
+                    exact_matches = [pkg for pkg in results if pkg.get('name', '').lower() == package_name.lower()]
+                    if exact_matches:
+                        self.logger.info(f"📦 Found exact match for '{package_name}' in {manager_name}")
+                        return manager_name
+                    
+                    # Look for close matches (package name starts with search term)
+                    close_matches = [pkg for pkg in results if pkg.get('name', '').lower().startswith(package_name.lower())]
+                    if close_matches:
+                        search_results[manager_name] = {
+                            'type': 'close_match',
+                            'matches': close_matches[:3],  # Top 3 matches
+                            'score': 2
+                        }
+                        self.logger.debug(f"Found close matches in {manager_name}: {[m.get('name') for m in close_matches[:3]]}")
+                    
+                    # Store any matches for later consideration
+                    elif not close_matches:
+                        search_results[manager_name] = {
+                            'type': 'partial_match',
+                            'matches': results[:3],
+                            'score': 1
+                        }
+                        self.logger.debug(f"Found partial matches in {manager_name}: {[m.get('name') for m in results[:3]]}")
+                        
+            except Exception as e:
+                self.logger.debug(f"Search failed in {manager_name}: {e}")
+                continue
+        
+        # If we found results, choose the best manager
+        if search_results:
+            # Prefer managers with close matches
+            close_match_managers = [m for m, r in search_results.items() if r['type'] == 'close_match']
+            if close_match_managers:
+                # Among close matches, prefer system package managers first
+                for manager_name in self.package_search_order:
+                    if manager_name in close_match_managers:
+                        self.logger.info(f"📦 Using {manager_name} for '{package_name}' (close match found)")
+                        self._display_search_suggestions(package_name, manager_name, search_results[manager_name]['matches'])
+                        return manager_name
+            
+            # If no close matches, try partial matches with system managers first
+            partial_match_managers = [m for m, r in search_results.items() if r['type'] == 'partial_match']
+            if partial_match_managers:
+                for manager_name in self.package_search_order:
+                    if manager_name in partial_match_managers:
+                        self.logger.info(f"📦 Using {manager_name} for '{package_name}' (partial match found)")
+                        self._display_search_suggestions(package_name, manager_name, search_results[manager_name]['matches'])
+                        return manager_name
+        
+        # No matches found in any manager
+        self.logger.warning(f"Package '{package_name}' not found in any available package manager")
+        return None
+    
+    def _display_search_suggestions(self, search_term: str, manager_name: str, matches: List[Dict[str, Any]]):
+        """Display search suggestions to the user"""
+        if not matches:
+            return
+            
+        self.logger.info(f"🔍 Similar packages found in {manager_name}:")
+        for match in matches[:3]:  # Show top 3 suggestions
+            name = match.get('name', 'Unknown')
+            version = match.get('version', '')
+            description = match.get('description', '')
+            
+            suggestion = f"  • {name}"
+            if version:
+                suggestion += f" ({version})"
+            if description:
+                suggestion += f" - {description[:60]}..."
+            
+            self.logger.info(suggestion)
+        
+        if len(matches) > 3:
+            self.logger.info(f"  ... and {len(matches) - 3} more")
+        
+        self.logger.info(f"💡 To install a specific package: batman -i <package_name> --manager {manager_name}")
     
     def _resolve_manager(self, manager_hint: str, package_name: str) -> Optional[str]:
         """Resolve the actual manager to use"""
